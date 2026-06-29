@@ -1,6 +1,9 @@
 import { sValidator } from "@hono/standard-validator";
 import { Hono } from "hono";
 import z from "zod";
+import { db } from "../db/db.ts";
+import { AuthorsTable } from "../db/schema.ts";
+import { eq } from "drizzle-orm/sql/expressions/conditions";
 
 const app = new Hono();
 
@@ -26,14 +29,17 @@ const authors: Author[] = [
 ];
 
 // Get all authors
-app.get("/", (c) => {
-  return c.json(authors);
+app.get("/", async (c) => {
+  const author = await db.query.AuthorsTable.findMany();
+  return c.json(author);
 });
 
 // Get author by ID
-app.get("/:id", (c) => {
+app.get("/:id", async (c) => {
   const id = c.req.param("id");
-  const author = authors.find((a) => a.id === id);
+  const author = await db.query.AuthorsTable.findFirst({
+    where: { id },
+  });
   if (!author) {
     return c.json({ error: "Author not found" }, 404);
   }
@@ -42,43 +48,39 @@ app.get("/:id", (c) => {
 });
 
 // Create a new author
-app.post("/", sValidator("json", crateAuthorSchema), (c) => {
+app.post("/", sValidator("json", crateAuthorSchema), async (c) => {
   const data = c.req.valid("json");
-  const author = {
-    id: crypto.randomUUID(),
-    ...data,
-  };
-  authors.push(author as Author);
+
+  const [author] = await db.insert(AuthorsTable).values(data).returning();
   return c.json(author, 201);
 });
 
 // Update an existing author
-app.put("/:id", sValidator("json", updateAuthorSchema), (c) => {
+app.put("/:id", sValidator("json", updateAuthorSchema), async (c) => {
   const id = c.req.param("id");
   const data = c.req.valid("json");
-  const author = authors.find((a) => a.id === id);
-
+  const [author] = await db
+    .update(AuthorsTable)
+    .set(data)
+    .where(eq(AuthorsTable.id, id))
+    .returning();
   if (author == null) {
     return c.json({ error: "Author not found" }, 404);
-  }
-  if (data.name !== undefined) {
-    author.name = data.name;
-  }
-  if (data.birthdary !== undefined) {
-    author.birthdary = data.birthdary;
   }
   return c.json(author);
 });
 
 // Delete an existing author
-app.delete("/:id", (c) => {
+app.delete("/:id", async (c) => {
   const id = c.req.param("id");
-  const author = authors.findIndex((a) => a.id === id);
-
-  if (author == null) {
+  const author = await db.query.AuthorsTable.findFirst({
+    where: { id },
+  });
+  if (!author) {
     return c.json({ error: "Author not found" }, 404);
   }
-  authors.splice(author, 1);
+
+  await db.delete(AuthorsTable).where(eq(AuthorsTable.id, id));
   return c.json({ message: "Author deleted successfully" }, 200);
 });
 export default app;
